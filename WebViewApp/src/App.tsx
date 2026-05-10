@@ -67,6 +67,7 @@ const uiDesignHeight = 720;
 const minUiScale = 0.65;
 const maxUiScale = 1;
 const scalePersistDelayMs = 300;
+const appIconUrl = new URL("../../Images/Soft/rabit.png", import.meta.url).href;
 const t8numenContributorLabel = "T8numen";
 const t8numenContributorNote =
   "2.0版本的webview修改请求由QQ尾号2808的<等风也等你>提出，由RMT作者进行指导，我进行实际ui替换，使用codex的5.5模型，从2026.5.5的2时开始，到5.6的22时已完成大部分ui迁移";
@@ -186,8 +187,13 @@ function getThemeStyle(preset: RmtColorPreset, uiScale: number): React.CSSProper
     "--rmt-border-strong": darkMode ? "#46505b" : "#cfd7df",
     "--rmt-text": darkMode ? "#eef3f8" : "#17202a",
     "--rmt-muted": darkMode ? "#a7b1bd" : "#566674",
-    "--rmt-button-bg": darkMode ? "#252b32" : "#ffffff",
-    "--rmt-button-hover": darkMode ? "#303740" : "#f1f5f8",
+    "--rmt-button-bg": darkMode ? "#252b32" : preset.secondaryColor,
+    "--rmt-button-hover": darkMode ? "#303740" : preset.accentColor,
+    "--rmt-button-border": darkMode ? "#46505b" : preset.accentColor,
+    "--rmt-button-text": darkMode ? "#eef3f8" : preset.titleTextColor,
+    "--rmt-button-hover-text": preset.primaryTextColor,
+    "--rmt-danger-soft": darkMode ? "#402426" : "#fff1f1",
+    "--rmt-disabled-text": darkMode ? "#788390" : "#7c8994",
     "--rmt-danger": darkMode ? "#f87171" : "#f3423a",
     "--rmt-info": darkMode ? "#5db4f4" : "#2698e6",
     "--rmt-neutral-action": darkMode ? "#5b6570" : "#777777"
@@ -334,9 +340,16 @@ export default function App() {
 
   const colorPreset = useMemo(() => getColorPreset(state.settings.colorPresetId), [state.settings.colorPresetId]);
   const scaleStyle = getThemeStyle(colorPreset, uiScale);
+  const showContentHeader =
+    activeTab?.kind !== "tool" &&
+    activeTab?.kind !== "settings" &&
+    activeTab?.kind !== "help" &&
+    activeTab?.kind !== "reward" &&
+    activeTab?.kind !== "thanks";
+  const isStaticContentTab = activeTab?.kind === "help" || activeTab?.kind === "reward" || activeTab?.kind === "thanks";
 
   return (
-    <div className="rmt-scale-viewport" ref={scaleHostRef}>
+    <div className="rmt-scale-viewport" onContextMenuCapture={(event) => event.preventDefault()} ref={scaleHostRef}>
       <div className="rmt-scale-content" style={scaleStyle}>
         <div className="app-shell classic-app" data-theme-mode={colorPreset.mode}>
           <TitleBar state={state} runAction={runAction} />
@@ -367,8 +380,8 @@ export default function App() {
               )}
 
               {activeTab && activeTab.kind !== "macro" && (
-                <main className="content classic-content">
-                  {activeTab.kind !== "tool" && activeTab.kind !== "settings" && (
+                <main className={classNames("content classic-content", isStaticContentTab && "static-tab-content")}>
+                  {showContentHeader && (
                     <div className="content-header">
                       <div>
                         <div className="eyebrow">{activeTab.symbol}</div>
@@ -426,8 +439,8 @@ function TitleBar({
   return (
     <header className="titlebar">
       <div className="drag-region">
-        <div className="app-mark">RMT</div>
-        <span>{state.version}</span>
+        <img alt="" className="app-icon" src={appIconUrl} />
+        <span className="version-label">{state.version}</span>
       </div>
       <div className="window-actions">
         <button title={uiCopy.window.minimize} onClick={() => runAction("minimize")} type="button">
@@ -530,45 +543,37 @@ function GlobalSidebar({ state, runAction }: { state: RmtState; runAction: RunAc
   return (
     <aside className="classic-global-sidebar">
       <div className="sidebar-section">
-        <span className="side-label">{uiCopy.sidebar.currentConfig}</span>
-        <button className="config-select-button" onClick={() => runAction("openSettingManager")} title={state.currentSettingName} type="button">
-          {state.currentSettingName}
-        </button>
-        <button className="side-button green" onClick={() => runAction("openSettingManager")} type="button">
-          <Settings size={15} />
-          {uiCopy.sidebar.configManager}
+        <button className="config-select-button config-manager-button" onClick={() => runAction("openSettingManager")} title={state.currentSettingName} type="button">
+          <span className="config-current-name">{state.currentSettingName}</span>
+          <span className="config-manager-label">
+            <Settings size={15} />
+            {uiCopy.sidebar.configManager}
+          </span>
         </button>
       </div>
 
       <div className="sidebar-section global-actions">
         <span className="side-label">{uiCopy.sidebar.globalActions}</span>
-        <button
-          className={classNames("side-card", state.isSuspend && "is-active")}
-          onClick={() => runAction("toggleSuspend")}
-          type="button"
-        >
-          <span>
+        <label className={classNames("side-toggle", state.isSuspend && "is-active")}>
+          <span className="side-toggle-main">
+            <input checked={state.isSuspend} onChange={() => runAction("toggleSuspend")} type="checkbox" />
             <Pause size={15} />
             {uiCopy.sidebar.suspend}
           </span>
           <kbd>{formatHotkey(state.settings.suspendHotkey)}</kbd>
-        </button>
-        <button
-          className={classNames("side-card", state.isPause && "is-active")}
-          onClick={() => runAction("togglePause")}
-          type="button"
-        >
-          <span>
+        </label>
+        <label className={classNames("side-toggle", state.isPause && "is-active")}>
+          <span className="side-toggle-main">
+            <input checked={state.isPause} onChange={() => runAction("togglePause")} type="checkbox" />
             <Square size={15} />
             {uiCopy.sidebar.pause}
           </span>
           <kbd>{formatHotkey(state.settings.pauseHotkey)}</kbd>
+        </label>
+        <button className="side-button side-command red" onClick={() => runAction("killAll")} type="button">
+          <span>{uiCopy.sidebar.killMacro}</span>
+          <kbd>{formatHotkey(state.settings.killMacroHotkey)}</kbd>
         </button>
-        <button className="side-button red" onClick={() => runAction("killAll")} type="button">
-          <Square size={15} />
-          {uiCopy.sidebar.killMacro}
-        </button>
-        <kbd className="shortcut-line">{formatHotkey(state.settings.killMacroHotkey)}</kbd>
         <button className="side-button gray" onClick={() => runAction("reload")} type="button">
           <RefreshCw size={15} />
           {uiCopy.sidebar.reload}
@@ -662,6 +667,14 @@ function normalizeHotkeyMainKey(value: string): string {
   return rawKey;
 }
 
+function formatLoopCountForDisplay(value: string): string {
+  return String(value).trim() === "-1" ? uiCopy.macro.infiniteLoop : String(value);
+}
+
+function normalizeLoopCountValue(value: string): string {
+  return value.trim() === uiCopy.macro.infiniteLoop ? "-1" : value;
+}
+
 function MacroTable({
   tab,
   patchLocalItem,
@@ -718,7 +731,7 @@ function MacroTable({
 
       {table.folds.map((fold) => (
           <section className={classNames("macro-module-section", fold.forbid && "is-disabled")} key={fold.index}>
-            <div className={classNames("module-config-row", !table.isMenuTable && "without-module-trigger")}>
+            <div className={classNames("module-config-row", table.isMenuTable ? "with-menu-trigger" : "without-module-trigger")}>
               <label className="module-field remark-field">
                 <span>{uiCopy.macro.remark}</span>
                 <input
@@ -728,29 +741,64 @@ function MacroTable({
                   onBlur={(event) => updateFold(table.index, fold.index, "remark", event.target.value)}
                 />
               </label>
-              <label className="module-field front-field">
-                <span>{uiCopy.macro.front}</span>
+              <div className="module-front-control">
                 <input
+                  aria-label={uiCopy.macro.front}
                   value={fold.frontInfo}
                   placeholder={uiCopy.macro.frontPlaceholder}
                   onChange={(event) => patchLocalFold(table.index, fold.index, "frontInfo", event.target.value)}
                   onBlur={(event) => updateFold(table.index, fold.index, "frontInfo", event.target.value)}
                 />
-              </label>
-              {table.isMenuTable && (
-                <button className="module-trigger-button" onClick={() => runAction("openTriggerEditor", { tableIndex: table.index, foldIndex: fold.index })} type="button">
+                <button
+                  onClick={() => runAction("openFrontInfoEditor", { tableIndex: table.index, foldIndex: fold.index })}
+                  title={uiCopy.macro.editFront}
+                  type="button"
+                >
                   <SquarePen size={15} />
-                  {fold.trigger || uiCopy.macro.editTriggerKey}
+                  {uiCopy.macro.edit}
                 </button>
+              </div>
+              {table.isMenuTable && (
+                <div className="module-trigger-controls">
+                  <button
+                    className="module-trigger-button"
+                    onClick={() => runAction("openTriggerEditor", { tableIndex: table.index, foldIndex: fold.index })}
+                    title={fold.trigger ? formatHotkey(fold.trigger) : uiCopy.macro.editTriggerKey}
+                    type="button"
+                  >
+                    <SquarePen size={15} />
+                    {fold.trigger ? formatHotkey(fold.trigger) : uiCopy.macro.editTriggerKey}
+                  </button>
+                  <select
+                    className="module-trigger-type-select"
+                    value={fold.triggerType}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      patchLocalFold(table.index, fold.index, "triggerType", value);
+                      updateFold(table.index, fold.index, "triggerType", value);
+                    }}
+                    title={uiCopy.macro.triggerType}
+                  >
+                    {uiCopy.macro.triggerTypeLabels.map((label, index) => (
+                      <option key={label} value={index + 1}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
-              <button onClick={() => runAction("addItem", { tableIndex: table.index, foldIndex: fold.index })} type="button">
-                <Plus size={15} />
-                {uiCopy.macro.addMacro}
-              </button>
-              <button onClick={() => runAction("pasteItem", { tableIndex: table.index, foldIndex: fold.index })} type="button">
-                <ClipboardPaste size={15} />
-                {uiCopy.macro.pasteMacro}
-              </button>
+              {!table.isMenuTable && (
+                <>
+                  <button onClick={() => runAction("addItem", { tableIndex: table.index, foldIndex: fold.index })} type="button">
+                    <Plus size={15} />
+                    {uiCopy.macro.addMacro}
+                  </button>
+                  <button onClick={() => runAction("pasteItem", { tableIndex: table.index, foldIndex: fold.index })} type="button">
+                    <ClipboardPaste size={15} />
+                    {uiCopy.macro.pasteMacro}
+                  </button>
+                </>
+              )}
               <button onClick={() => runAction("addFold", { tableIndex: table.index, afterFoldIndex: fold.index })} type="button">
                 <Plus size={15} />
                 {uiCopy.macro.addModule}
@@ -835,6 +883,7 @@ function MacroTable({
                       className="trigger-editor-button"
                       title={table.isTimingTable ? uiCopy.macro.editTiming : table.isStringTable ? uiCopy.macro.editStringTrigger : uiCopy.macro.editTriggerKey}
                       onClick={() => runAction("openTriggerEditor", { tableIndex: table.index, itemIndex: item.index })}
+                      disabled={table.isMenuTable}
                       type="button"
                     >
                       {table.isTimingTable ? uiCopy.macro.editTiming : formatHotkey(item.trigger)}
@@ -842,7 +891,7 @@ function MacroTable({
                     <select
                       className="select-cell"
                       value={item.triggerType}
-                      disabled={table.isTimingTable}
+                      disabled={table.isTimingTable || table.isMenuTable}
                       onChange={(event) => {
                         const value = Number(event.target.value);
                         patchLocalItem(table.index, item.index, "triggerType", value);
@@ -856,10 +905,14 @@ function MacroTable({
                       ))}
                     </select>
                     <input
-                      value={item.loopCount}
+                      list={`loop-count-options-${table.index}-${fold.index}-${item.index}`}
+                      value={formatLoopCountForDisplay(item.loopCount)}
                       onChange={(event) => patchLocalItem(table.index, item.index, "loopCount", event.target.value)}
-                      onBlur={(event) => updateItem(table.index, item.index, "loopCount", event.target.value)}
+                      onBlur={(event) => updateItem(table.index, item.index, "loopCount", normalizeLoopCountValue(event.target.value))}
                     />
+                    <datalist id={`loop-count-options-${table.index}-${fold.index}-${item.index}`}>
+                      <option value={uiCopy.macro.infiniteLoop} />
+                    </datalist>
                     <MacroSettingsControl
                       item={item}
                       tableIndex={table.index}
@@ -874,35 +927,39 @@ function MacroTable({
                       <SquarePen size={14} />
                       {uiCopy.macro.edit}
                     </button>
-                    <label className="inline-check row-disabled">
-                      <input
-                        type="checkbox"
-                        checked={item.forbid}
-                        onChange={(event) => {
-                          patchLocalItem(table.index, item.index, "forbid", event.target.checked);
-                          updateItem(table.index, item.index, "forbid", event.target.checked);
-                        }}
-                      />
-                      {uiCopy.macro.disabled}
-                    </label>
-                    <div className="row-actions">
+                    <div className={classNames("row-actions", table.isMenuTable && "menu-row-actions")}>
                       <button onClick={() => runAction("copyItem", { tableIndex: table.index, itemIndex: item.index })} title={uiCopy.macro.copyMacro} type="button">
                         <Copy size={14} />
                         {uiCopy.macro.copy}
                       </button>
-                      <button
-                        className="danger"
-                        onClick={() =>
-                          confirmAction(uiCopy.macro.confirmDeleteMacro, "deleteItem", {
-                            tableIndex: table.index,
-                            itemIndex: item.index
-                          })
-                        }
-                        type="button"
-                      >
-                        <Trash2 size={14} />
-                        {uiCopy.macro.delete}
-                      </button>
+                      {!table.isMenuTable && (
+                        <>
+                          <label className="inline-check row-disabled">
+                            <input
+                              type="checkbox"
+                              checked={item.forbid}
+                              onChange={(event) => {
+                                patchLocalItem(table.index, item.index, "forbid", event.target.checked);
+                                updateItem(table.index, item.index, "forbid", event.target.checked);
+                              }}
+                            />
+                            {uiCopy.macro.disabled}
+                          </label>
+                          <button
+                            className="danger"
+                            onClick={() =>
+                              confirmAction(uiCopy.macro.confirmDeleteMacro, "deleteItem", {
+                                tableIndex: table.index,
+                                itemIndex: item.index
+                              })
+                            }
+                            type="button"
+                          >
+                            <Trash2 size={14} />
+                            {uiCopy.macro.delete}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1003,13 +1060,13 @@ function LegacyGroup({
   className,
   children
 }: {
-  title: string;
+  title?: string;
   className?: string;
   children: React.ReactNode;
 }) {
   return (
     <fieldset className={classNames("legacy-group", className)}>
-      <legend>{title}</legend>
+      {title && <legend>{title}</legend>}
       {children}
     </fieldset>
   );
@@ -1085,7 +1142,7 @@ function ToolPanel({
 
   return (
     <section className="legacy-page tool-legacy-page">
-      <LegacyGroup title={uiCopy.tool.toolWindows}>
+      <LegacyGroup className="tool-panel-group">
         <div className="legacy-row legacy-row-compact">
           <span className="legacy-label">{uiCopy.tool.variableMonitor}:</span>
           <button className="legacy-command" onClick={() => runAction("openVarMonitor")} type="button">
@@ -1097,7 +1154,14 @@ function ToolPanel({
           <span className="legacy-label">{uiCopy.tool.mouseInfoHotkey}:</span>
           <HotkeyDisplay value={tools.toolCheckHotKey} />
           <label className="legacy-check">
-            <input type="checkbox" checked={tools.isToolCheck} onChange={() => runAction("toggleToolCheck")} />
+            <input
+              type="checkbox"
+              checked={tools.isToolCheck}
+              onChange={(event) => {
+                patchLocalTools("isToolCheck", event.target.checked);
+                void runAction("toggleToolCheck");
+              }}
+            />
             {uiCopy.tool.toggle}
           </label>
           <label className="legacy-check">
@@ -1253,9 +1317,6 @@ function SettingsPanel({
           <LegacyField label={uiCopy.settings.multiThreadNum}>
             <TextInput value={settings.mutiThreadNum} onLocal={(value) => patchLocalSettings("mutiThreadNum", value)} onCommit={(value) => updateSetting("mutiThreadNum", value)} />
           </LegacyField>
-          <LegacyField label={uiCopy.settings.softBGColor}>
-            <TextInput value={settings.softBGColor} onLocal={(value) => patchLocalSettings("softBGColor", value)} onCommit={(value) => updateSetting("softBGColor", value)} />
-          </LegacyField>
         </div>
       </LegacyGroup>
 
@@ -1276,12 +1337,16 @@ function SettingsPanel({
             {uiCopy.tool.recordOptions}
           </button>
           <label className="legacy-check">
+            <input type="checkbox" checked={settings.fixedMenuWheel} onChange={(event) => { patchLocalSettings("fixedMenuWheel", event.target.checked); updateSetting("fixedMenuWheel", event.target.checked); }} />
+            {uiCopy.settings.fixedMenuWheel}
+          </label>
+          <label className="legacy-check">
             <input type="checkbox" checked={settings.noVariableTip} onChange={(event) => { patchLocalSettings("noVariableTip", event.target.checked); updateSetting("noVariableTip", event.target.checked); }} />
             {uiCopy.settings.noVariableTip}
           </label>
           <label className="legacy-check">
-            <input type="checkbox" checked={settings.fixedMenuWheel} onChange={(event) => { patchLocalSettings("fixedMenuWheel", event.target.checked); updateSetting("fixedMenuWheel", event.target.checked); }} />
-            {uiCopy.settings.fixedMenuWheel}
+            <input type="checkbox" checked={settings.modalSubGui} onChange={(event) => { patchLocalSettings("modalSubGui", event.target.checked); updateSetting("modalSubGui", event.target.checked); }} />
+            {uiCopy.settings.modalSubGui}
           </label>
           <label className="legacy-check">
             <input type="checkbox" checked={settings.showSplitLine} onChange={(event) => { patchLocalSettings("showSplitLine", event.target.checked); updateSetting("showSplitLine", event.target.checked); }} />

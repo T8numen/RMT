@@ -1,11 +1,173 @@
 #Include ..\Plugins\WebViewToo\Lib\WebViewToo.ahk
 
 RMT_WEBVIEW_VERSION := "RMTv2.0"
+RMT_WEBVIEW_DIST_ENTRY := "WebViewApp/dist/index.html"
+RMT_WEBVIEW_DEV_DEFAULT_URL := "http://127.0.0.1:5173/"
 RmtCopiedWebItem := ""
 
 class RmtWebViewGui extends WebViewGui {
+    static DefaultWidth := 640
+    static DefaultHeight := 480
+
+    __New(Options?, Title?, EventObj?, WebViewSettings := {}) {
+        super.__New(Options?, Title?, EventObj?, WebViewSettings)
+        try this.Sizers.Destroy()
+        this.Sizers := RmtEdgeResizeOverlay(this)
+        defaultWidth := WebViewSettings.HasProp("DefaultWidth") ? WebViewSettings.DefaultWidth : RmtWebViewGui.DefaultWidth
+        defaultHeight := WebViewSettings.HasProp("DefaultHeight") ? WebViewSettings.DefaultHeight : RmtWebViewGui.DefaultHeight
+        this.Sizers.Move(0, 0, defaultWidth, defaultHeight)
+        WebViewSizer.ToggleSizer(this)
+        try this.Control.AreDefaultContextMenusEnabled := false
+    }
+
     Submit(Hide := true) {
         return {}
+    }
+}
+
+class RmtEdgeResizeOverlay {
+    static BorderSize := 5
+    static CaptionButtonReserveWidth := 132
+    static CaptionButtonReserveHeight := 34
+    static CornerMinSize := 22
+    static CornerBorderMultiplier := 4
+    static WM_SETCURSOR := 0x0020
+    static WM_LBUTTONDOWN := 0x0201
+    static WM_NCLBUTTONDOWN := 0x00A1
+    static SetWindowPosShowFlags := 0x0250
+    static HTLEFT := 10
+    static HTRIGHT := 11
+    static HTTOP := 12
+    static HTTOPLEFT := 13
+    static HTTOPRIGHT := 14
+    static HTBOTTOM := 15
+    static HTBOTTOMLEFT := 16
+    static HTBOTTOMRIGHT := 17
+    static IDC_SIZENWSE := 32642
+    static IDC_SIZENESW := 32643
+    static IDC_SIZEWE := 32644
+    static IDC_SIZENS := 32645
+    static HandleMap := Map()
+    static Registered := false
+
+    __New(Parent) {
+        RmtEdgeResizeOverlay.Register()
+        this.Parent := Parent
+        this.Visible := false
+        this.Handles := []
+        this.AddHandle("topLeft", RmtEdgeResizeOverlay.HTTOPLEFT, RmtEdgeResizeOverlay.IDC_SIZENWSE)
+        this.AddHandle("top", RmtEdgeResizeOverlay.HTTOP, RmtEdgeResizeOverlay.IDC_SIZENS)
+        this.AddHandle("topRight", RmtEdgeResizeOverlay.HTTOPRIGHT, RmtEdgeResizeOverlay.IDC_SIZENESW)
+        this.AddHandle("right", RmtEdgeResizeOverlay.HTRIGHT, RmtEdgeResizeOverlay.IDC_SIZEWE)
+        this.AddHandle("bottomRight", RmtEdgeResizeOverlay.HTBOTTOMRIGHT, RmtEdgeResizeOverlay.IDC_SIZENWSE)
+        this.AddHandle("bottom", RmtEdgeResizeOverlay.HTBOTTOM, RmtEdgeResizeOverlay.IDC_SIZENS)
+        this.AddHandle("bottomLeft", RmtEdgeResizeOverlay.HTBOTTOMLEFT, RmtEdgeResizeOverlay.IDC_SIZENESW)
+        this.AddHandle("left", RmtEdgeResizeOverlay.HTLEFT, RmtEdgeResizeOverlay.IDC_SIZEWE)
+    }
+
+    static Register() {
+        if (RmtEdgeResizeOverlay.Registered)
+            return
+        OnMessage(RmtEdgeResizeOverlay.WM_SETCURSOR, (Params*) => RmtEdgeResizeOverlay.HandleSetCursor(Params*))
+        OnMessage(RmtEdgeResizeOverlay.WM_LBUTTONDOWN, (Params*) => RmtEdgeResizeOverlay.HandleLeftButtonDown(Params*))
+        RmtEdgeResizeOverlay.Registered := true
+    }
+
+    static HandleSetCursor(wParam, lParam, Msg, Hwnd) {
+        if (!RmtEdgeResizeOverlay.HandleMap.Has(Hwnd))
+            return
+        info := RmtEdgeResizeOverlay.HandleMap[Hwnd]
+        cursor := DllCall("LoadCursor", "Ptr", 0, "Ptr", info.Cursor, "Ptr")
+        DllCall("SetCursor", "Ptr", cursor)
+        return 1
+    }
+
+    static HandleLeftButtonDown(wParam, lParam, Msg, Hwnd) {
+        if (!RmtEdgeResizeOverlay.HandleMap.Has(Hwnd))
+            return
+        info := RmtEdgeResizeOverlay.HandleMap[Hwnd]
+        MouseGetPos(&mouseX, &mouseY)
+        packedPos := (mouseX & 0xFFFF) | ((mouseY & 0xFFFF) << 16)
+        DllCall("ReleaseCapture")
+        DllCall("PostMessage", "Ptr", info.ParentHwnd, "UInt", RmtEdgeResizeOverlay.WM_NCLBUTTONDOWN, "Ptr", info.Hit, "Ptr", packedPos)
+        return 0
+    }
+
+    AddHandle(Name, Hit, Cursor) {
+        handleGui := Gui("-Caption +ToolWindow +E0x08000000 +Parent" this.Parent.Hwnd)
+        handleGui.BackColor := "000000"
+        handleGui.Show("x0 y0 w1 h1 Hide")
+        try WinSetTransparent(1, "ahk_id " handleGui.Hwnd)
+        handle := { Name: Name, Gui: handleGui, Hit: Hit, Cursor: Cursor, X: 0, Y: 0, W: 1, H: 1 }
+        this.Handles.Push(handle)
+        RmtEdgeResizeOverlay.HandleMap[handleGui.Hwnd] := { ParentHwnd: this.Parent.Hwnd, Hit: Hit, Cursor: Cursor }
+    }
+
+    Move(X, Y, Width, Height) {
+        border := RmtEdgeResizeOverlay.BorderSize
+        corner := Max(border * RmtEdgeResizeOverlay.CornerBorderMultiplier, RmtEdgeResizeOverlay.CornerMinSize)
+        captionReserveWidth := RmtEdgeResizeOverlay.CaptionButtonReserveWidth
+        captionReserveHeight := RmtEdgeResizeOverlay.CaptionButtonReserveHeight
+        topRightX := Max(corner, Width - captionReserveWidth - corner)
+        topInnerWidth := Max(1, topRightX - corner)
+        rightInnerHeight := Max(1, Height - captionReserveHeight - corner)
+        leftInnerHeight := Max(1, Height - corner * 2)
+        bottomInnerWidth := Max(1, Width - corner * 2)
+        this.SetHandle("topLeft", 0, 0, corner, corner)
+        this.SetHandle("top", corner, 0, topInnerWidth, border)
+        this.SetHandle("topRight", topRightX, 0, corner, corner)
+        this.SetHandle("right", Width - border, captionReserveHeight, border, rightInnerHeight)
+        this.SetHandle("bottomRight", Width - corner, Height - corner, corner, corner)
+        this.SetHandle("bottom", corner, Height - border, bottomInnerWidth, border)
+        this.SetHandle("bottomLeft", 0, Height - corner, corner, corner)
+        this.SetHandle("left", 0, corner, border, leftInnerHeight)
+    }
+
+    SetHandle(Name, X, Y, W, H) {
+        for handle in this.Handles {
+            if (handle.Name != Name)
+                continue
+            handle.X := X
+            handle.Y := Y
+            handle.W := W
+            handle.H := H
+            if (this.Visible)
+                this.ApplyHandle(handle)
+            return
+        }
+    }
+
+    ApplyHandle(handle) {
+        DllCall(
+            "SetWindowPos",
+            "Ptr", handle.Gui.Hwnd,
+            "Ptr", 0,
+            "Int", handle.X,
+            "Int", handle.Y,
+            "Int", handle.W,
+            "Int", handle.H,
+            "UInt", RmtEdgeResizeOverlay.SetWindowPosShowFlags
+        )
+    }
+
+    Show(*) {
+        this.Visible := true
+        for handle in this.Handles
+            this.ApplyHandle(handle)
+    }
+
+    Hide(*) {
+        this.Visible := false
+        for handle in this.Handles
+            DllCall("ShowWindow", "Ptr", handle.Gui.Hwnd, "Int", 0)
+    }
+
+    Destroy() {
+        for handle in this.Handles {
+            RmtEdgeResizeOverlay.HandleMap.Delete(handle.Gui.Hwnd)
+            handle.Gui.Destroy()
+        }
+        this.Handles := []
     }
 }
 
@@ -71,10 +233,71 @@ InitUI() {
     RmtInitWebStateControls()
     RegisterRmtWebCallbacks(MyGui)
     MyGui.BrowseFolder(A_WorkingDir)
-    MyGui.Navigate("WebViewApp/dist/index.html")
+    MyGui.Navigate(RmtGetWebViewEntry())
     CustomTrayMenu()
     OnOpen()
 
+}
+
+RmtGetWebViewEntry() {
+    global RMT_WEBVIEW_DIST_ENTRY
+    devUrl := RmtGetWebViewDevUrl()
+    if (devUrl != "" && RmtIsWebViewDevServerReady(devUrl))
+        return devUrl
+    return RMT_WEBVIEW_DIST_ENTRY
+}
+
+RmtOpenHelpDocument() {
+    helpPath := RmtGetHelpDocumentPath()
+    if (helpPath == "")
+        throw Error("找不到 RMT 说明文档 index.html")
+    Run(helpPath)
+}
+
+RmtGetHelpDocumentPath() {
+    candidates := [
+        A_WorkingDir "\index.html",
+        A_ScriptDir "\index.html",
+        A_WorkingDir "\Web\index.html",
+        A_ScriptDir "\Web\index.html"
+    ]
+    for _, candidate in candidates {
+        if (FileExist(candidate))
+            return candidate
+    }
+    return ""
+}
+
+RmtGetWebViewDevUrl() {
+    global RMT_WEBVIEW_DEV_DEFAULT_URL
+    devUrl := Trim(EnvGet("RMT_WEBVIEW_DEV_URL"))
+    if (devUrl != "")
+        return RmtNormalizeWebViewDevUrl(devUrl)
+
+    devFlag := StrLower(Trim(EnvGet("RMT_WEBVIEW_DEV")))
+    if (devFlag == "1" || devFlag == "true" || devFlag == "yes" || devFlag == "on")
+        return RMT_WEBVIEW_DEV_DEFAULT_URL
+    return ""
+}
+
+RmtNormalizeWebViewDevUrl(devUrl) {
+    devUrl := Trim(devUrl)
+    if !RegExMatch(devUrl, "i)^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(/.*)?$")
+        return ""
+    return RegExMatch(devUrl, "/$") ? devUrl : devUrl "/"
+}
+
+RmtIsWebViewDevServerReady(devUrl) {
+    try {
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(500, 500, 500, 500)
+        req.Open("GET", devUrl, false)
+        req.Send()
+        return req.Status >= 200 && req.Status < 500
+    }
+    catch {
+        return false
+    }
 }
 
 OnOpen() {
@@ -154,6 +377,7 @@ RefreshListenVarGui(isForce := false) {
 
 RefreshToolUI() {
     global ToolCheckInfo
+    static lastPostTick := 0
 
     ToolCheckInfo.ToolMousePosCtrl.Value := ToolCheckInfo.PosStr
     ToolCheckInfo.ToolProcessNameCtrl.Value := ToolCheckInfo.ProcessName
@@ -163,6 +387,10 @@ RefreshToolUI() {
     ToolCheckInfo.ToolProcessIdCtrl.Value := ToolCheckInfo.ProcessId
     ToolCheckInfo.ToolColorCtrl.Value := ToolCheckInfo.Color
     ToolCheckInfo.ToolMouseWinPosCtrl.Value := ToolCheckInfo.WinPosStr
+    if (A_TickCount - lastPostTick >= 250) {
+        lastPostTick := A_TickCount
+        try RmtPostState()
+    }
 }
 
 RmtGetWebViewSettings() {
@@ -238,6 +466,7 @@ RmtInitWebStateControls() {
     MySoftData.ColorPresetIdCtrl := RmtWebValueControl(MySoftData.ColorPresetId)
     MySoftData.UiScaleCtrl := RmtWebValueControl(MySoftData.UiScale)
     MySoftData.FixedMenuWheelCtrl := RmtWebValueControl(MySoftData.FixedMenuWheel)
+    MySoftData.ModalSubGuiCtrl := RmtWebValueControl(MySoftData.IsModalSubGui)
     MySoftData.MutiThreadNumCtrl := RmtWebValueControl(MySoftData.MutiThreadNum)
     MySoftData.SoftBGColorCon := RmtWebValueControl(MySoftData.SoftBGColor)
     MySoftData.NoVariableTipCtrl := RmtWebValueControl(MySoftData.NoVariableTip)
@@ -330,7 +559,7 @@ RmtDispatchWebAction(actionType, payload) {
             MenuReload()
             return ""
         case "openHelp":
-            Run(A_WorkingDir "\RMT帮助文档.html")
+            RmtOpenHelpDocument()
             return ""
         case "openUrl":
             url := RmtGet(payload, "url", "")
@@ -385,6 +614,9 @@ RmtDispatchWebAction(actionType, payload) {
             return ""
         case "close":
             ExitApp()
+            return ""
+        case "openFrontInfoEditor":
+            RmtOpenFrontInfoEditorAction(payload)
             return ""
         case "updateSetting":
             RmtUpdateSetting(RmtGet(payload, "field", ""), RmtGet(payload, "value", ""))
@@ -580,6 +812,7 @@ RmtBuildSettings() {
     settings["colorPresetId"] := RmtControlValue(MySoftData.ColorPresetIdCtrl, MySoftData.ColorPresetId)
     settings["uiScale"] := RmtClampUiScale(RmtControlValue(MySoftData.UiScaleCtrl, MySoftData.UiScale))
     settings["fixedMenuWheel"] := RmtJsonBool(RmtControlValue(MySoftData.FixedMenuWheelCtrl, MySoftData.FixedMenuWheel))
+    settings["modalSubGui"] := RmtJsonBool(RmtControlValue(MySoftData.ModalSubGuiCtrl, MySoftData.IsModalSubGui))
     settings["mutiThreadNum"] := String(RmtControlValue(MySoftData.MutiThreadNumCtrl, MySoftData.MutiThreadNum))
     settings["softBGColor"] := RmtControlValue(MySoftData.SoftBGColorCon, MySoftData.SoftBGColor)
     settings["noVariableTip"] := RmtJsonBool(RmtControlValue(MySoftData.NoVariableTipCtrl, MySoftData.NoVariableTip))
@@ -690,6 +923,9 @@ RmtUpdateSetting(field, value) {
         case "fixedMenuWheel":
             MySoftData.FixedMenuWheel := RmtBool(value)
             RmtSetControl(MySoftData.FixedMenuWheelCtrl, MySoftData.FixedMenuWheel)
+        case "modalSubGui":
+            MySoftData.IsModalSubGui := RmtBool(value)
+            RmtSetControl(MySoftData.ModalSubGuiCtrl, MySoftData.IsModalSubGui)
         case "mutiThreadNum":
             MySoftData.MutiThreadNum := value
             RmtSetControl(MySoftData.MutiThreadNumCtrl, value)
@@ -1127,6 +1363,24 @@ RmtOpenMacroEditorAction(payload) {
     MyMacroGui.ShowGui(tableItem.MacroArr[itemIndex], true)
 }
 
+RmtOpenFrontInfoEditorAction(payload) {
+    global MyFrontInfoGui
+    tableIndex := RmtInt(RmtGet(payload, "tableIndex", 0), 0)
+    foldIndex := RmtInt(RmtGet(payload, "foldIndex", 0), 0)
+    tableItem := RmtGetTableItem(tableIndex)
+    foldInfo := tableItem.FoldInfo
+    RmtValidateFoldIndex(foldInfo, foldIndex)
+
+    frontInfoCon := RmtWebValueControl(foldInfo.FrontInfoArr[foldIndex])
+    SureFrontInfo() {
+        foldInfo.FrontInfoArr[foldIndex] := frontInfoCon.Value
+        RmtPostState()
+    }
+
+    MyFrontInfoGui.SureAction := SureFrontInfo
+    MyFrontInfoGui.ShowGui(frontInfoCon, true)
+}
+
 RmtOpenTriggerEditorAction(payload) {
     global MySoftData, MyTriggerKeyGui, MyTriggerStrGui, MyTimingGui
     tableIndex := RmtInt(RmtGet(payload, "tableIndex", 0), 0)
@@ -1462,8 +1716,8 @@ AddOperBtnUI() {
     posY += 40
 
     posY := 505
-    btnHelp := MyGui.Add("Button", Format("x{} y{} w{} h{} center", 15, posY, 100, 30), GetLang("RMT文档"))
-    btnHelp.OnEvent("Click", (*) => Run(A_WorkingDir "\index.html"))
+    btnHelp := MyGui.Add("Button", Format("x{} y{} w{} h{} center", 15, posY, 100, 30), GetLang("RMT说明文档"))
+    btnHelp.OnEvent("Click", (*) => RmtOpenHelpDocument())
 
     posY := 540
     MySoftData.BtnSave := MyGui.Add("Button", Format("x{} y{} w{} h{} center", 15, posY, 100, 30), GetLang("应用并保存"))
@@ -1892,7 +2146,7 @@ AddHelpUI(index) {
 
     posY += 30
     posX := MySoftData.TabPosX + 15
-    LinkStr := A_WorkingDir "\index.html"
+    LinkStr := RmtGetHelpDocumentPath()
     AddTableControl("Text", Format("x{} y{} w{} h{}", posX, posY, 130, 30), GetLang("操作说明文档："), tableItem).SetFont((
         Format("S{} W{} Q{}", 12, 600, 0)))
     AddTableControl("Link", Format("x{} y{} w{} h{}", posX + 130, posY, 500, 30), Format('<a href="{}">{}</a>', LinkStr,

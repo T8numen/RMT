@@ -4,6 +4,7 @@ import type { RmtState } from "../src/types";
 import {
   darkMacroState,
   denseMacroState,
+  menuVisualState,
   settingsVisualState,
   thanksVisualState,
   toolVisualState,
@@ -13,6 +14,7 @@ import {
 const macroScenarios = [
   { name: "default-1070x590", width: 1070, height: 590, state: visualState, expectedRows: 3 },
   { name: "wide-1360x720", width: 1360, height: 720, state: visualState, expectedRows: 3 },
+  { name: "menu-1070x590", width: 1070, height: 590, state: menuVisualState, expectedRows: 3 },
   { name: "dense-narrow-900x590", width: 900, height: 590, state: denseMacroState, expectedRows: 5 },
   { name: "dark-1070x590", width: 1070, height: 590, state: darkMacroState, expectedRows: 5 }
 ];
@@ -24,13 +26,56 @@ async function loadState(page: Page, state: RmtState) {
       ahk?: {
         RmtAction?: (json: string) => Promise<string>;
       };
+      __rmtActions?: Array<{ type: string; payload?: Record<string, unknown> }>;
     };
 
+    bridgeWindow.__rmtActions = [];
     bridgeWindow.ahk = {
       RmtAction: async (json: string) => {
-        const action = JSON.parse(json) as { type: string; payload?: { tabIndex?: number } };
-        if (action.type === "setTab" && action.payload?.tabIndex) {
+        const action = JSON.parse(json) as { type: string; payload?: Record<string, unknown> };
+        bridgeWindow.__rmtActions?.push(action);
+        if (action.type === "setTab" && typeof action.payload?.tabIndex === "number") {
           currentState = { ...currentState, activeTabIndex: action.payload.tabIndex };
+        }
+        if (action.type === "toggleToolCheck") {
+          currentState = {
+            ...currentState,
+            tools: {
+              ...currentState.tools,
+              isToolCheck: !currentState.tools.isToolCheck
+            }
+          };
+        }
+        if (
+          action.type === "updateFold" &&
+          typeof action.payload?.tableIndex === "number" &&
+          typeof action.payload.foldIndex === "number" &&
+          typeof action.payload.field === "string"
+        ) {
+          const nextState = structuredClone(currentState) as RmtState;
+          const targetFold = nextState.tabs
+            .find((tab) => tab.table?.index === action.payload?.tableIndex)
+            ?.table?.folds.find((fold) => fold.index === action.payload?.foldIndex);
+          if (targetFold) {
+            (targetFold as unknown as Record<string, unknown>)[action.payload.field] = action.payload.value;
+            currentState = nextState;
+          }
+        }
+        if (
+          action.type === "updateItem" &&
+          typeof action.payload?.tableIndex === "number" &&
+          typeof action.payload.itemIndex === "number" &&
+          typeof action.payload.field === "string"
+        ) {
+          const nextState = structuredClone(currentState) as RmtState;
+          const targetItem = nextState.tabs
+            .find((tab) => tab.table?.index === action.payload?.tableIndex)
+            ?.table?.folds.flatMap((fold) => fold.items)
+            .find((item) => item.index === action.payload?.itemIndex);
+          if (targetItem) {
+            (targetItem as unknown as Record<string, unknown>)[action.payload.field] = action.payload.value;
+            currentState = nextState;
+          }
         }
 
         return JSON.stringify({
@@ -44,6 +89,9 @@ async function loadState(page: Page, state: RmtState) {
 
   await page.goto("/");
   await expect(page.locator(".classic-app")).toBeVisible();
+  await page.waitForFunction(() => {
+    return (window as Window & { __rmtActions?: Array<{ type: string }> }).__rmtActions?.some((action) => action.type === "getState");
+  });
 }
 
 async function expectShellFits(page: Page) {
@@ -68,6 +116,15 @@ async function expectShellFits(page: Page) {
   expect(metrics.shellRight).toBeLessThanOrEqual(metrics.viewportWidth + 1);
   expect(metrics.mainRight).toBeLessThanOrEqual(metrics.viewportWidth + 1);
   expect(metrics.sidebarScrollHeight).toBeLessThanOrEqual(metrics.sidebarClientHeight + 1);
+}
+
+async function expectClassicContentFits(page: Page) {
+  const metrics = await page.locator(".classic-content").evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight
+  }));
+
+  expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight + 1);
 }
 
 async function expectDarkControlsReadable(page: Page) {
@@ -126,7 +183,7 @@ async function expectDarkControlsReadable(page: Page) {
 
     return Array.from(
       document.querySelectorAll<HTMLElement>(
-        ".module-macro-row input:not([type='checkbox']), .module-macro-row select, .module-macro-row button, .row-disabled, .module-disabled"
+        ".module-macro-row input:not([type='checkbox']), .module-macro-row select, .module-macro-row button, .row-disabled, .module-disabled, .module-trigger-controls button, .module-trigger-controls select"
       )
     ).map((element) => {
       const [red, green, blue] = parseRgb(getComputedStyle(element).color);
@@ -164,24 +221,53 @@ for (const scenario of macroScenarios) {
             text: element.textContent?.trim() ?? ""
           };
         });
+        const rowActionButtons = Array.from(document.querySelectorAll<HTMLElement>(".row-actions button")).map((element) => ({
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+          text: element.textContent?.trim() ?? ""
+        }));
+        const rowActionGroups = Array.from(document.querySelectorAll<HTMLElement>(".row-actions")).map((group) =>
+          Array.from(group.children).map((element) => element.textContent?.trim() ?? "")
+        );
         const disabledModules = Array.from(document.querySelectorAll<HTMLElement>(".macro-module-section.is-disabled"));
 
         return {
           disabledModuleCount: disabledModules.length,
           operationRight: Math.max(...operationCells.map((element) => element.getBoundingClientRect().right)),
           viewportWidth: window.innerWidth,
-          disabledCells
+          disabledCells,
+          rowActionButtons,
+          rowActionGroups
         };
       });
 
       await expectShellFits(page);
       expect(metrics.operationRight).toBeLessThanOrEqual(metrics.viewportWidth + 1);
-      expect(metrics.disabledCells.length).toBeGreaterThan(0);
+      if (scenario.name.includes("menu")) {
+        expect(metrics.disabledCells.length).toBe(0);
+      } else {
+        expect(metrics.disabledCells.length).toBeGreaterThan(0);
+      }
 
       for (const cell of metrics.disabledCells) {
         expect(cell.text).toContain(uiCopy.macro.disabled);
         expect(cell.scrollWidth).toBeLessThanOrEqual(cell.clientWidth + 1);
         expect(cell.height).toBeLessThanOrEqual(42);
+      }
+
+      for (const button of metrics.rowActionButtons) {
+        expect(button.scrollWidth, `${button.text} action width`).toBeLessThanOrEqual(button.clientWidth + 1);
+      }
+
+      for (const group of metrics.rowActionGroups) {
+        if (scenario.name.includes("menu")) {
+          expect(group).toHaveLength(1);
+          expect(group[0]).toContain(uiCopy.macro.copy);
+        } else {
+          expect(group[0]).toContain(uiCopy.macro.copy);
+          expect(group[1]).toContain(uiCopy.macro.disabled);
+          expect(group[2]).toContain(uiCopy.macro.delete);
+        }
       }
 
       if (scenario.name.includes("dense")) {
@@ -201,6 +287,96 @@ for (const scenario of macroScenarios) {
   });
 }
 
+test.describe("menu macro module controls", () => {
+  test.use({ viewport: { width: 1070, height: 590 } });
+
+  test("updates module trigger type through the fold bridge path", async ({ page }) => {
+    await loadState(page, menuVisualState);
+
+    const firstControls = page.locator(".module-trigger-controls").first();
+    await expect(page.locator(".module-trigger-controls")).toHaveCount(2);
+    await expect(firstControls.locator("button")).toContainText("Alt+M");
+    await expect(page.locator(".module-config-row").first().getByRole("button", { name: uiCopy.macro.addMacro })).toHaveCount(0);
+    await expect(page.locator(".module-config-row").first().getByRole("button", { name: uiCopy.macro.pasteMacro })).toHaveCount(0);
+
+    await firstControls.locator("select").selectOption("4");
+
+    const updateActions = await page.evaluate(() => {
+      const actions = (window as Window & { __rmtActions?: Array<{ type: string; payload?: Record<string, unknown> }> }).__rmtActions ?? [];
+      return actions.filter((action) => action.type === "updateFold");
+    });
+
+    expect(updateActions).toContainEqual({
+      type: "updateFold",
+      payload: {
+        tableIndex: 3,
+        foldIndex: 1,
+        field: "triggerType",
+        value: 4
+      }
+    });
+    await expect(firstControls.locator("select")).toHaveValue("4");
+  });
+
+  test("keeps menu item trigger controls and destructive actions disabled", async ({ page }) => {
+    await loadState(page, menuVisualState);
+
+    const firstRow = page.locator(".module-macro-row").first();
+    await expect(firstRow.locator(".trigger-editor-button")).toBeDisabled();
+    await expect(firstRow.locator(".select-cell")).toBeDisabled();
+    await expect(firstRow.getByRole("button", { name: uiCopy.macro.delete })).toHaveCount(0);
+    await expect(firstRow.locator(".row-disabled")).toHaveCount(0);
+
+    const actions = await page.evaluate(() => {
+      return (window as Window & { __rmtActions?: Array<{ type: string; payload?: Record<string, unknown> }> }).__rmtActions ?? [];
+    });
+
+    expect(actions.some((action) => action.type === "openTriggerEditor" && action.payload?.tableIndex === 3)).toBe(false);
+    expect(actions.some((action) => action.type === "updateItem" && action.payload?.field === "triggerType")).toBe(false);
+  });
+});
+
+test.describe("macro loop count editing", () => {
+  test.use({ viewport: { width: 1070, height: 590 } });
+
+  test("supports the infinite option while keeping custom text editable", async ({ page }) => {
+    await loadState(page, visualState);
+
+    const loopInput = page.locator(".module-macro-row").first().locator("input[list]");
+    await loopInput.fill(uiCopy.macro.infiniteLoop);
+    await loopInput.blur();
+    await expect(loopInput).toHaveValue(uiCopy.macro.infiniteLoop);
+
+    await loopInput.fill("变量次数");
+    await loopInput.blur();
+    await expect(loopInput).toHaveValue("变量次数");
+
+    const loopUpdates = await page.evaluate(() => {
+      const actions = (window as Window & { __rmtActions?: Array<{ type: string; payload?: Record<string, unknown> }> }).__rmtActions ?? [];
+      return actions.filter((action) => action.type === "updateItem" && action.payload?.field === "loopCount");
+    });
+
+    expect(loopUpdates).toContainEqual({
+      type: "updateItem",
+      payload: {
+        tableIndex: 1,
+        itemIndex: 1,
+        field: "loopCount",
+        value: "-1"
+      }
+    });
+    expect(loopUpdates).toContainEqual({
+      type: "updateItem",
+      payload: {
+        tableIndex: 1,
+        itemIndex: 1,
+        field: "loopCount",
+        value: "变量次数"
+      }
+    });
+  });
+});
+
 test.describe("tool and settings views", () => {
   test.use({ viewport: { width: 1070, height: 590 } });
 
@@ -208,8 +384,22 @@ test.describe("tool and settings views", () => {
     await loadState(page, toolVisualState);
 
     await expect(page.locator(".tool-legacy-page")).toBeVisible();
+    await expect(page.locator(".content-header")).toHaveCount(0);
+    await expect(page.getByText(uiCopy.tool.toolWindows)).toHaveCount(0);
     await expect(page.locator(".tool-output")).toContainText("OCR 第 1 行");
+    await expect(page.locator(".legacy-tool-output")).toHaveCSS("min-height", "136px");
+    const mouseInfoToggle = page.locator(".tool-hotkey-row").first().locator("input[type='checkbox']").first();
+    await expect(mouseInfoToggle).toBeChecked();
+    await mouseInfoToggle.click();
+    await expect(mouseInfoToggle).not.toBeChecked();
+    await mouseInfoToggle.click();
+    await expect(mouseInfoToggle).toBeChecked();
+    const toolActions = await page.evaluate(() => {
+      return (window as Window & { __rmtActions?: Array<{ type: string }> }).__rmtActions ?? [];
+    });
+    expect(toolActions.some((action) => action.type === "toggleToolCheck")).toBe(true);
     await expectShellFits(page);
+    await expectClassicContentFits(page);
 
     await expect(page).toHaveScreenshot("tool-active-1070x590.png", {
       animations: "disabled",
@@ -222,13 +412,101 @@ test.describe("tool and settings views", () => {
 
     await expect(page.locator(".diagnostics-block")).toHaveCount(0);
     await expect(page.locator(".settings-legacy-page select")).toHaveCount(4);
-    await expect(page.locator(".settings-legacy-page input[type='checkbox']")).toHaveCount(10);
+    await expect(page.locator(".settings-legacy-page input[type='checkbox']")).toHaveCount(11);
+    await expect(page.locator(".content-header")).toHaveCount(0);
+    await expect(page.locator(".settings-legacy-page")).not.toContainText(uiCopy.settings.softBGColor);
+    for (const label of [
+      uiCopy.settings.holdFloat,
+      uiCopy.settings.preIntervalFloat,
+      uiCopy.settings.intervalFloat,
+      uiCopy.settings.coordXFloat,
+      uiCopy.settings.coordYFloat,
+      uiCopy.settings.multiThreadNum
+    ]) {
+      await expect(page.locator(".legacy-numeric-grid")).toContainText(label);
+    }
+
+    const switchLabels = await page.locator(".legacy-switch-grid > *").evaluateAll((elements) =>
+      elements.map((element) => element.textContent?.trim() ?? "")
+    );
+    expect(switchLabels[3]).toContain(uiCopy.tool.recordOptions);
+    expect(switchLabels[4]).toContain(uiCopy.settings.fixedMenuWheel);
     await expectShellFits(page);
 
     await expect(page).toHaveScreenshot("settings-1070x590.png", {
       animations: "disabled",
       maxDiffPixelRatio: 0.02
     });
+  });
+});
+
+test.describe("static content views", () => {
+  test.use({ viewport: { width: 1070, height: 590 } });
+
+  const staticScenarios = [
+    { name: "help", tabIndex: 9, selector: ".help-legacy-page" },
+    { name: "reward", tabIndex: 10, selector: ".reward-panel" },
+    { name: "thanks", tabIndex: 11, selector: ".thanks-panel" }
+  ];
+
+  for (const scenario of staticScenarios) {
+    test(`${scenario.name} view has no runtime header and keeps larger content text`, async ({ page }) => {
+      await loadState(page, { ...visualState, activeTabIndex: scenario.tabIndex });
+
+      await expect(page.locator(scenario.selector)).toBeVisible();
+      await expect(page.locator(".content-header")).toHaveCount(0);
+
+      const fontSize = await page.locator(scenario.selector).evaluate((element) =>
+        Number.parseFloat(window.getComputedStyle(element).fontSize)
+      );
+      expect(fontSize).toBeGreaterThanOrEqual(16);
+      const contentMetrics = await page.locator(scenario.selector).evaluate((element) => {
+        const panelRect = element.getBoundingClientRect();
+        const contentRect = element.parentElement?.getBoundingClientRect();
+        return {
+          panelHeight: panelRect.height,
+          contentHeight: contentRect?.height ?? 0
+        };
+      });
+      expect(contentMetrics.panelHeight).toBeGreaterThanOrEqual(contentMetrics.contentHeight - 1);
+      if (scenario.name === "reward") {
+        const rewardMetrics = await page.locator(".reward-panel").evaluate((element) => {
+          const style = window.getComputedStyle(element);
+          const qrGrid = element.querySelector<HTMLElement>(".qr-grid");
+          return {
+            alignItems: style.alignItems,
+            minHeight: style.minHeight,
+            textAlign: style.textAlign,
+            qrJustifyContent: qrGrid ? window.getComputedStyle(qrGrid).justifyContent : ""
+          };
+        });
+        expect(rewardMetrics.alignItems).toBe("center");
+        expect(rewardMetrics.minHeight).toBe("100%");
+        expect(rewardMetrics.textAlign).toBe("center");
+        expect(rewardMetrics.qrJustifyContent).toBe("center");
+      }
+      await expectShellFits(page);
+      await expectClassicContentFits(page);
+    });
+  }
+});
+
+test.describe("context menu handling", () => {
+  test.use({ viewport: { width: 1070, height: 590 } });
+
+  test("prevents the default WebView context menu from the app root", async ({ page }) => {
+    await loadState(page, visualState);
+
+    const wasCanceled = await page.locator(".classic-app").evaluate((element) => {
+      const event = new MouseEvent("contextmenu", {
+        bubbles: true,
+        button: 2,
+        cancelable: true
+      });
+      return !element.dispatchEvent(event);
+    });
+
+    expect(wasCanceled).toBe(true);
   });
 });
 

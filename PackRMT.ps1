@@ -6,6 +6,7 @@ param(
     [string]$ReleaseType = "interactive",
     [ValidateSet("both", "lite", "runtime")]
     [string]$Distribution = "both",
+    [string]$OutputDir = "",
     [switch]$NoWait
 )
 
@@ -23,14 +24,28 @@ $Ahk2ExePaths = @(
     "C:\Program Files\AutoHotkey\Compiler\Ahk2Exe.exe"
 )
 
-# 64位 Base 编译器路径
+# 64位 Ahk2Exe base 路径
 $Base64Paths = @(
+    "$PSScriptRoot\.tools\AutoHotkey\v2\Unicode 64-bit.bin",
     "$PSScriptRoot\.tools\AutoHotkey\v2\AutoHotkey64.exe",
     "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
 )
 
-# 32位 Base 编译器路径
+# 32位 Ahk2Exe base 路径
 $Base32Paths = @(
+    "$PSScriptRoot\.tools\AutoHotkey\v2\Unicode 32-bit.bin",
+    "$PSScriptRoot\.tools\AutoHotkey\v2\AutoHotkey32.exe",
+    "C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe"
+)
+
+# 64位 AutoHotkey 运行器路径，用于 Ahk2Exe 的 /ahk 自动 include 扫描
+$Ahk64Paths = @(
+    "$PSScriptRoot\.tools\AutoHotkey\v2\AutoHotkey64.exe",
+    "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+)
+
+# 32位 AutoHotkey 运行器路径，用于 Ahk2Exe 的 /ahk 自动 include 扫描
+$Ahk32Paths = @(
     "$PSScriptRoot\.tools\AutoHotkey\v2\AutoHotkey32.exe",
     "C:\Program Files\AutoHotkey\v2\AutoHotkey32.exe"
 )
@@ -126,6 +141,31 @@ function Copy-IfExist {
     }
 }
 
+function Copy-RequiredFile {
+    param([string]$Source, [string]$DestDir)
+
+    if (-not (Test-Path -LiteralPath $Source)) {
+        throw "缺少发行资源: $Source"
+    }
+    New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $DestDir -Force
+    Write-Log "  已复制: $(Split-Path $Source -Leaf)" "Gray"
+}
+
+function Copy-RequiredDirectory {
+    param([string]$Source, [string]$Destination)
+
+    if (-not (Test-Path -LiteralPath $Source)) {
+        throw "缺少发行资源目录: $Source"
+    }
+    if (Test-Path -LiteralPath $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path (Split-Path $Destination -Parent) -Force | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force -Recurse
+    Write-Log "  已复制: $(Split-Path $Source -Leaf)" "Gray"
+}
+
 function Get-Version {
     $uiUtil = Join-Path $PSScriptRoot "Main\UIUtil.ahk"
     if (-not (Test-Path $uiUtil)) {
@@ -201,6 +241,7 @@ function Compile {
     param(
         [string]$AhkFile,
         [string]$BaseExe,
+        [string]$AhkExe,
         [string]$OutputExe,
         [string]$IconPath,
         [string]$Name = "编译"
@@ -210,24 +251,14 @@ function Compile {
         "/in", "`"$AhkFile`"",
         "/icon", "`"$IconPath`"",
         "/base", "`"$BaseExe`"",
+        "/ahk", "`"$AhkExe`"",
         "/cp", "65001",
         "/out", "`"$OutputExe`"",
         "/silent", "verbose"
     )
 
-    Write-Log "  执行: Ahk2Exe /in ... /base ... /out ..." "Gray"
-    $oldComSpec = $env:ComSpec
-    $comSpecShim = Get-Ahk2ExeComSpecShim
-    if ($comSpecShim) {
-        # AutoHotkey 2.0.26 can hang in Ahk2Exe's cmd.exe-based /iLib scan.
-        $env:ComSpec = $comSpecShim
-    }
-    try {
-        $process = Start-Process -FilePath $Ahk2exe -ArgumentList $arguments -NoNewWindow -Wait -PassThru
-    }
-    finally {
-        $env:ComSpec = $oldComSpec
-    }
+    Write-Log "  执行: Ahk2Exe /in ... /base ... /ahk ... /out ..." "Gray"
+    $process = Start-Process -FilePath $Ahk2exe -ArgumentList $arguments -NoNewWindow -Wait -PassThru
 
     if ($process.ExitCode -ne 0) {
         Write-Log "  ✗ 进程退出码: $($process.ExitCode)" "Red"
@@ -304,6 +335,51 @@ function Copy-WebViewAssets {
     return $true
 }
 
+function Initialize-ReleaseDir {
+    param(
+        [string]$ReleaseDir,
+        [ValidateSet("x64", "x32")]
+        [string]$ReleaseArch
+    )
+
+    if (Test-Path -LiteralPath $ReleaseDir) {
+        Remove-Item -LiteralPath $ReleaseDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+
+    Write-Log "初始化 $ReleaseArch 发行目录..." "Gray"
+    foreach ($dirName in @("Audio", "Joy", "VBS", "Lang")) {
+        Copy-RequiredDirectory `
+            -Source (Join-Path $PSScriptRoot $dirName) `
+            -Destination (Join-Path $ReleaseDir $dirName)
+    }
+
+    Copy-RequiredFile -Source (Join-Path $PSScriptRoot "index.html") -DestDir $ReleaseDir
+
+    $pluginsDir = Join-Path $ReleaseDir "Plugins"
+    New-Item -ItemType Directory -Path $pluginsDir -Force | Out-Null
+    Copy-RequiredFile -Source (Join-Path $PSScriptRoot "Plugins\IbInputSimulator.dll") -DestDir $pluginsDir
+
+    $openCvDir = Join-Path $pluginsDir "OpenCV"
+    Copy-RequiredFile -Source (Join-Path $PSScriptRoot "Plugins\OpenCV\opencv_world481.dll") -DestDir $openCvDir
+    Copy-RequiredFile -Source (Join-Path $PSScriptRoot "Plugins\OpenCV\RMT_OpenCV.dll") -DestDir $openCvDir
+
+    $rmtPluginDir = Join-Path $pluginsDir "RMT"
+    Copy-RequiredFile -Source (Join-Path $PSScriptRoot "Plugins\RMT\RMT.dll") -DestDir $rmtPluginDir
+
+    $screenCaptureDir = Join-Path $pluginsDir "ScreenCapture"
+    Copy-RequiredFile -Source (Join-Path $PSScriptRoot "Plugins\ScreenCapture\ScreenCapture.exe") -DestDir $screenCaptureDir
+
+    $vigemDir = Join-Path $pluginsDir "ViGEm"
+    Copy-RequiredFile -Source (Join-Path $PSScriptRoot "Plugins\ViGEm\ViGEmWrapper.dll") -DestDir $vigemDir
+
+    $rapidOcrDir = Join-Path $pluginsDir "RapidOcr"
+    $rapidOcrArchDir = if ($ReleaseArch -eq "x64") { "64bit" } else { "32bit" }
+    Copy-RequiredDirectory -Source (Join-Path $PSScriptRoot "Plugins\RapidOcr\$rapidOcrArchDir") -Destination (Join-Path $rapidOcrDir $rapidOcrArchDir)
+    Copy-RequiredDirectory -Source (Join-Path $PSScriptRoot "Plugins\RapidOcr\ch_models") -Destination (Join-Path $rapidOcrDir "ch_models")
+    Copy-RequiredDirectory -Source (Join-Path $PSScriptRoot "Plugins\RapidOcr\en_models") -Destination (Join-Path $rapidOcrDir "en_models")
+}
+
 function Get-ReleaseVariants {
     param([string]$DistributionType)
     if ($DistributionType -eq "both") {
@@ -318,6 +394,16 @@ function Get-RuntimeArchName {
         return "x64"
     }
     return "x86"
+}
+
+function Get-ReleaseOutputRoot {
+    if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+        return (Join-Path ([Environment]::GetFolderPath("Desktop")) "RMTRelease")
+    }
+    if ([System.IO.Path]::IsPathRooted($OutputDir)) {
+        return $OutputDir
+    }
+    return (Join-Path $PSScriptRoot $OutputDir)
 }
 
 function Resolve-WebViewFixedRuntimeSource {
@@ -425,24 +511,11 @@ function New-Release {
     if ($Type -eq "x64" -or $Type -eq "both") {
         Write-Step 1 "生成 ReleaseX64"
         $releaseDir = Join-Path $PSScriptRoot "ReleaseX64"
+        Initialize-ReleaseDir -ReleaseDir $releaseDir -ReleaseArch "x64"
         $releaseThread = Join-Path $releaseDir "Thread"
 
         # 创建目录
         New-Item -ItemType Directory -Path $releaseThread -Force | Out-Null
-
-        # 复制 Lang 目录
-        Write-Log "复制 Lang 目录..." "Gray"
-        if (Test-Path "$releaseDir\Lang") {
-            Remove-Item "$releaseDir\Lang" -Recurse -Force
-        }
-        Copy-Item -Path "$PSScriptRoot\Lang" -Destination "$releaseDir\Lang" -Force -Recurse -ErrorAction SilentlyContinue
-
-        # 复制帮助文档
-        $helpSrc = Join-Path $PSScriptRoot "RMT帮助文档.html"
-        if (Test-Path $helpSrc) {
-            Copy-Item $helpSrc -Destination (Join-Path $releaseDir "RMT帮助文档.html") -Force
-            Write-Log "  已复制: RMT帮助文档.html" "Gray"
-        }
 
         # 复制 WebView2 前端和运行库
         if (-not (Copy-WebViewAssets $releaseDir)) {
@@ -453,12 +526,12 @@ function New-Release {
         Remove-OldFiles -Dir $releaseThread -Filter "Work*.exe"
 
         # 编译 Work1.exe
-        if (-not (Compile -AhkFile $WorkAhk -BaseExe $Base64Exe -OutputExe "$releaseThread\Work1.exe" -IconPath $IconPath -Name "Work1.exe")) {
+        if (-not (Compile -AhkFile $WorkAhk -BaseExe $Base64Exe -AhkExe $Ahk64Exe -OutputExe "$releaseThread\Work1.exe" -IconPath $IconPath -Name "Work1.exe")) {
             return $false
         }
 
         # 编译主程序 RMTv{version}.exe
-        if (-not (Compile -AhkFile $RmtAhk -BaseExe $Base64Exe -OutputExe "$releaseDir\RMTv$version.exe" -IconPath $IconPath -Name "RMTv$version.exe")) {
+        if (-not (Compile -AhkFile $RmtAhk -BaseExe $Base64Exe -AhkExe $Ahk64Exe -OutputExe "$releaseDir\RMTv$version.exe" -IconPath $IconPath -Name "RMTv$version.exe")) {
             return $false
         }
     }
@@ -466,24 +539,11 @@ function New-Release {
     if ($Type -eq "x32" -or $Type -eq "both") {
         Write-Step 2 "生成 ReleaseX32"
         $releaseDir = Join-Path $PSScriptRoot "ReleaseX32"
+        Initialize-ReleaseDir -ReleaseDir $releaseDir -ReleaseArch "x32"
         $releaseThread = Join-Path $releaseDir "Thread"
 
         # 创建目录
         New-Item -ItemType Directory -Path $releaseThread -Force | Out-Null
-
-        # 复制 Lang 目录
-        Write-Log "复制 Lang 目录..." "Gray"
-        if (Test-Path "$releaseDir\Lang") {
-            Remove-Item "$releaseDir\Lang" -Recurse -Force
-        }
-        Copy-Item -Path "$PSScriptRoot\Lang" -Destination "$releaseDir\Lang" -Force -Recurse -ErrorAction SilentlyContinue
-
-        # 复制帮助文档
-        $helpSrc = Join-Path $PSScriptRoot "RMT帮助文档.html"
-        if (Test-Path $helpSrc) {
-            Copy-Item $helpSrc -Destination (Join-Path $releaseDir "RMT帮助文档.html") -Force
-            Write-Log "  已复制: RMT帮助文档.html" "Gray"
-        }
 
         # 复制 WebView2 前端和运行库
         if (-not (Copy-WebViewAssets $releaseDir)) {
@@ -494,26 +554,28 @@ function New-Release {
         Remove-OldFiles -Dir $releaseThread -Filter "Work*.exe"
 
         # 编译 Work1.exe (32位)
-        if (-not (Compile -AhkFile $WorkAhk -BaseExe $Base32Exe -OutputExe "$releaseThread\Work1.exe" -IconPath $IconPath -Name "Work1.exe")) {
+        if (-not (Compile -AhkFile $WorkAhk -BaseExe $Base32Exe -AhkExe $Ahk32Exe -OutputExe "$releaseThread\Work1.exe" -IconPath $IconPath -Name "Work1.exe")) {
             return $false
         }
 
         # 编译主程序 RMTv{version}.exe
-        if (-not (Compile -AhkFile $RmtAhk -BaseExe $Base32Exe -OutputExe "$releaseDir\RMTv$version.exe" -IconPath $IconPath -Name "RMTv$version.exe")) {
+        if (-not (Compile -AhkFile $RmtAhk -BaseExe $Base32Exe -AhkExe $Ahk32Exe -OutputExe "$releaseDir\RMTv$version.exe" -IconPath $IconPath -Name "RMTv$version.exe")) {
             return $false
         }
     }
 
-    Write-Section "创建发行包到桌面"
-    $desktop = [Environment]::GetFolderPath("Desktop")
-    $rmtReleaseDir = Join-Path $desktop "RMTRelease"
+    Write-Section "创建发行包"
+    $rmtReleaseDir = Get-ReleaseOutputRoot
 
-    if (Test-Path $rmtReleaseDir) {
-        Write-Log "删除旧 RMTRelease 目录..." "Yellow"
-        Remove-Item $rmtReleaseDir -Recurse -Force
+    if (-not (Test-Path -LiteralPath $rmtReleaseDir)) {
+        New-Item -ItemType Directory -Path $rmtReleaseDir -Force | Out-Null
     }
 
     $versionDir = Join-Path $rmtReleaseDir "RMTv$version"
+    if (Test-Path -LiteralPath $versionDir) {
+        Write-Log "删除旧版本目录: $versionDir" "Yellow"
+        Remove-Item -LiteralPath $versionDir -Recurse -Force
+    }
     New-Item -ItemType Directory -Path $versionDir -Force | Out-Null
     Write-Log "创建 $versionDir" "Gray"
 
@@ -599,6 +661,7 @@ function Main {
         Write-Log "PowerShell $($PSVersionTable.PSVersion)" "Gray"
         Write-Log "工作目录: $PSScriptRoot" "Gray"
         Write-Log "分发版本: $Distribution" "Gray"
+        Write-Log "输出目录: $(Get-ReleaseOutputRoot)" "Gray"
 
         if (-not $PSScriptRoot) {
             Write-Log "错误: 无法确定脚本目录" "Red"
@@ -620,10 +683,15 @@ function Main {
         $Ahk2exe = Find-Exe "Ahk2Exe" $Ahk2ExePaths
         if (-not $Ahk2exe) { Wait-KeyPress; exit 1 }
 
-        $Base64Exe = Find-Exe "64Base (AutoHotkey64.exe)" $Base64Paths
+        $Base64Exe = Find-Exe "64Base (Unicode 64-bit.bin)" $Base64Paths
         if (-not $Base64Exe) { Wait-KeyPress; exit 1 }
 
-        $Base32Exe = Find-Exe "32Base (AutoHotkey32.exe)" $Base32Paths
+        $Base32Exe = Find-Exe "32Base (Unicode 32-bit.bin)" $Base32Paths
+
+        $Ahk64Exe = Find-Exe "64Runtime (AutoHotkey64.exe)" $Ahk64Paths
+        if (-not $Ahk64Exe) { Wait-KeyPress; exit 1 }
+
+        $Ahk32Exe = Find-Exe "32Runtime (AutoHotkey32.exe)" $Ahk32Paths
 
         # 步骤 3: 关闭正在运行的 RMT.ahk
         Write-Step 3 "关闭正在运行的 RMT.ahk"
@@ -631,12 +699,12 @@ function Main {
 
         # 步骤 4: 清理旧文件
         Write-Step 4 "清理旧文件"
-        Remove-OldFiles -Dir $WorkDir -Filter "Work*.exe"
+        Remove-OldFiles -Dir $WorkDir -Filter "Work1.exe"
 
         # 步骤 5: 编译 Work1.exe
         Write-Step 5 "编译 Work1.exe"
         $IconPath = Join-Path $PSScriptRoot "Images\Soft\rabit.ico"
-        $result = Compile -AhkFile $WorkAhk -BaseExe $Base64Exe -OutputExe "$WorkDir\Work1.exe" -IconPath $IconPath -Name "Work1.exe"
+        $result = Compile -AhkFile $WorkAhk -BaseExe $Base64Exe -AhkExe $Ahk64Exe -OutputExe "$WorkDir\Work1.exe" -IconPath $IconPath -Name "Work1.exe"
         if (-not $result) { Wait-KeyPress; exit 1 }
 
         # 步骤 6: 打包帮助文档
@@ -667,13 +735,13 @@ function Main {
             }
         }
         elseif ($choice -eq 3) {
-            if ($Base32Exe) {
+            if ($Base32Exe -and $Ahk32Exe) {
                 if (-not (New-Release -Type "both")) {
                     Write-Log "发行版创建失败" "Red"
                 }
             }
             else {
-                Write-Log "未找到 32 位编译器，生成 X64 测试版" "Yellow"
+                Write-Log "未找到 32 位 base 或运行器，生成 X64 测试版" "Yellow"
                 if (-not (New-Release -Type "x64")) {
                     Write-Log "发行版创建失败" "Red"
                 }

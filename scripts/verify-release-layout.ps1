@@ -8,8 +8,6 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$HelpDocName = "RMT" + [char]0x5e2e + [char]0x52a9 + [char]0x6587 + [char]0x6863 + ".html"
-
 function Get-RmtVersion {
     $uiUtilPath = Join-Path $RepoRoot "Main\UIUtil.ahk"
     $content = Get-Content -LiteralPath $uiUtilPath -Raw
@@ -42,7 +40,7 @@ function Resolve-ReleaseDirs {
     }
 
     $dirs = @(Get-ChildItem -LiteralPath $releaseRootPath -Directory |
-        Where-Object { $_.Name -match '^RMTv.+_x(64|32)$' } |
+        Where-Object { $_.Name -match '^RMTv.+_x(64|32)(?:_(?:lite|runtime))?$' } |
         ForEach-Object { $_.FullName })
 
     if ($dirs.Count -eq 0) {
@@ -98,14 +96,14 @@ function Test-ReleaseDir {
     Assert-PathExists $releasePath "Plugins\WebViewToo\Lib\WebViewToo.ahk" "WebViewToo wrapper" $problems
     Assert-PathExists $releasePath "Plugins\WebViewToo\Lib\WebView2.ahk" "WebView2 wrapper" $problems
     Assert-PathExists $releasePath "WebViewApp\dist\index.html" "WebView dist index" $problems
-    Assert-PathExists $releasePath $HelpDocName "help document" $problems
+    Assert-PathExists $releasePath "index.html" "help document" $problems
     Assert-GlobExists $releasePath "WebViewApp\dist\assets" "*.js" "WebView JavaScript bundle" $problems
     Assert-GlobExists $releasePath "WebViewApp\dist\assets" "*.css" "WebView CSS bundle" $problems
 
-    if ((Split-Path -Leaf $releasePath) -match '_x64$') {
+    if ((Split-Path -Leaf $releasePath) -match '_x64(?:_|$)') {
         Assert-PathExists $releasePath "Plugins\WebViewToo\Lib\64bit\WebView2Loader.dll" "64-bit WebView2 loader" $problems
     }
-    elseif ((Split-Path -Leaf $releasePath) -match '_x32$') {
+    elseif ((Split-Path -Leaf $releasePath) -match '_x32(?:_|$)') {
         Assert-PathExists $releasePath "Plugins\WebViewToo\Lib\32bit\WebView2Loader.dll" "32-bit WebView2 loader" $problems
     }
     else {

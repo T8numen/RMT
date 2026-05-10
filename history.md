@@ -1,5 +1,24 @@
 # History
 
+## Unreleased
+
+- Added a manual GitHub Actions packaging workflow with release artifact upload and on-demand WebView2 Fixed Runtime download.
+- Aligned release packaging with the upstream single-file help output at `index.html`.
+- Converted `ReleaseX32` and `ReleaseX64` into generated packaging staging directories instead of tracked duplicate runtime trees.
+- Added a Windows verification workflow and maintenance fixes for version checks, release output paths, release layout checks, and tracked AutoHotkey tool ignore rules.
+- Added a repository-local Chinese AutoHotkey runtime for packaged RMT error dialogs, including a Chinese error help page and rebuild notes.
+- Fixed WebView edge resize hitboxes and disabled the default WebView context menu.
+- Restored the modal sub-window setting initialization and WebView settings binding.
+- Added WebView contract and dist asset verification scripts for maintenance checks.
+- Clarified WebView dist asset staging requirements and named local resize overlay constants.
+- Adjusted the first batch of WebView UI layout details, including title bar, sidebar buttons, macro row actions, settings switches, and static content pages.
+- Linked WebView button colors to the active UI color preset across sidebar, legacy, and macro row controls.
+- Added menu macro module trigger type controls and covered the fold update path with visual tests.
+- Added an opt-in WebView Vite dev server mode while keeping `WebViewApp/dist` as the default release path.
+- Refined the WebView UI shell, sidebar, macro rows, settings switches, and static content pages for tighter legacy-style layout.
+- Fixed remaining WebView UI parity issues for sidebar toggles, help document routing, macro module editing, disabled row states, tool output sizing, reward layout, and settings numeric labels.
+- Tightened WebView menu macro item permissions, loop-count editing, sidebar config/kill controls, tool mouse-info syncing, and static page fill behavior.
+
 ## 2.0
 
 - Migrated the main window to the WebView UI and updated the displayed version to `RMTv2.0`.
